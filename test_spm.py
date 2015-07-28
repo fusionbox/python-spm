@@ -53,6 +53,7 @@ class RunTest(TempFileMixin, unittest.TestCase):
 
         cat = run('cat')
         cat.stdin = open(fname)
+        cat.start()
 
         assert cat.stdout.read().decode() == content
 
@@ -71,19 +72,22 @@ class RunTest(TempFileMixin, unittest.TestCase):
             assert six.u(file_.read()) == string
 
     def test_environment(self):
-        env = run('env', env={'FOO': 'BAR'}).stdout.read().decode().split('\n')
+        proc = run('env', env={'FOO': 'BAR'})
+        output, _ = proc.wait()
 
-        assert 'FOO=BAR' in env
+        assert 'FOO=BAR' in output.split('\n')
 
     def test_empty_environment_by_default(self):
-        env = run('env').stdout.read().decode()
+        env = run('env')
+        output, _ = env.wait()
 
-        assert env == ''
+        assert output == ''
 
     def test_copy_environment_opt_in(self):
-        env = run('env', env=propagate_env({})).stdout.read().decode()
+        env = run('env', env=propagate_env({}))
+        output, _ = env.wait()
 
-        assert env != ''
+        assert output != ''
 
     def test_repr(self):
         """
@@ -102,8 +106,9 @@ class RunTest(TempFileMixin, unittest.TestCase):
 
     def test_empty_env(self):
         proc = run('env', env={'foo': 'bar'})
+        output, _ = proc.wait()
 
-        spm_run = set(proc.stdout.read().decode().split('\n'))
+        spm_run = set(output.split('\n'))
         sh_run = set(
             subprocess.check_output(str(proc), shell=True).decode().split('\n')
         )
@@ -116,12 +121,14 @@ class RunTest(TempFileMixin, unittest.TestCase):
 
     def test_environement_on_pipe(self):
         proc = pipe(['env'], ['egrep', '^FOO='], env={'FOO': 'BAR'})
+        output, _ = proc.wait()
 
-        assert proc.stdout.read().decode() == 'FOO=BAR\n'
+        assert output == 'FOO=BAR\n'
 
     def test_pass_subprocess_to_pipe(self):
         proc = pipe(['printf', 'hello'], ['gzip'], run('zcat'))
-        assert proc.stdout.read().decode() == 'hello'
+        output, _ = proc.wait()
+        assert output == 'hello'
 
 
 class PipeTest(DeadLockMixin, TempFileMixin, unittest.TestCase):
@@ -135,7 +142,9 @@ class PipeTest(DeadLockMixin, TempFileMixin, unittest.TestCase):
         cat = run('gzip').pipe('zcat')
         cat.stdin = open(fname)
 
-        assert cat.stdout.read().decode() == content
+        output, _ = cat.wait()
+
+        assert output == content
 
     def test_stdout_to_file(self):
         string = '__output__'
@@ -151,10 +160,12 @@ class PipeTest(DeadLockMixin, TempFileMixin, unittest.TestCase):
             assert six.u(file_.read()) == string
 
     def test_safe_pipe_stdout_read(self):
-        command = pipe(['gzip'], ['zcat'])
+        command = pipe(['cat'])
+        command.start()
 
         with self.assertDoesNotHang():
-            assert command.stdout.read().decode() == ''  # No deadlock
+            assert command.stdout.read().decode() == 'greetings'  # No deadlock
+            command.stdin.write('sup')
 
     def test_safe_pipe_wait(self):
         command = pipe(['gzip'], ['zcat'])

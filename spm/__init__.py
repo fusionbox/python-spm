@@ -8,51 +8,6 @@ import subprocess
 import six
 
 
-class _LazyPopen(object):
-    """
-    Invoke Popen only when getting an attribute.
-
-    This is internal to spm library.
-    """
-    def __init__(self, parent):
-        self._parent = parent
-        self._wrapped = None
-
-    @property
-    def is_running(self):
-        if self._wrapped is None:
-            return False
-        else:
-            return self.poll() is None
-
-    def __getattribute__(self, name):
-        if name in ('_parent', '_wrapped', 'is_running'):
-            return super(_LazyPopen, self).__getattribute__(name)
-        else:
-            if self._wrapped is None:
-                kwargs = self._parent._get_popen_kwargs()
-                self._wrapped = subprocess.Popen(**kwargs)
-
-            return getattr(self._wrapped, name)
-
-
-class _LazyPopenAttribute(object):
-    def __init__(self, obj, attr):
-        self._obj = obj
-        self._attr = attr
-        self._wrapped = None
-
-    def __getattribute__(self, name):
-        if name in ('_obj', '_attr', '_wrapped'):
-            return super(_LazyPopenAttribute, self).__getattribute__(name)
-        else:
-            if self._wrapped is None:
-                self._wrapped = getattr(self._obj, self._attr)
-                self._obj._parent._get_popen_attr()
-
-            return getattr(self._wrapped, name)
-
-
 # Types with only one instance of it
 stdin = type('stdin_redirect', (object, ), {})()
 stdout = type('stdout_redirect', (object, ), {})()
@@ -79,7 +34,7 @@ class Subprocess(object):
         self._stderr = stderr
         self._env = env
         self._args = args
-        self._process = _LazyPopen(self)
+        self._process = None
 
     def _get_popen_kwargs(self):
         kwargs = dict(args=self._args,
@@ -114,26 +69,24 @@ class Subprocess(object):
 
         return kwargs
 
-    def _get_popen_attr(self):
-        if isinstance(self._stdin, Subprocess):
-            self._stdin._process._wrapped.stdout = None
-            self._stdin._get_popen_attr()
-        elif hasattr(self._process.stdin, 'close'):
-            if not self._process.stdin.closed:
-                self._process.stdin.flush()
-                self._process.stdin.close()
-
     @property
     def stdout(self):
         """
         Set the stdout of the subprocess. It should be a file. If its ``None``
         it could be read from the main process.
         """
-        return _LazyPopenAttribute(self._process, 'stdout')
+        if self._process:
+            return self._process.stdout
+        else:
+            return self._stdout
+
+    @property
+    def is_running(self):
+        return self._process and self._process.poll() is None
 
     @stdout.setter
     def stdout(self, value):
-        if self._process.is_running:
+        if self.is_running:
             raise RuntimeError("Can't change stdout of a running process")
 
         self._stdout = value
@@ -152,7 +105,7 @@ class Subprocess(object):
 
     @stdin.setter
     def stdin(self, value):
-        if self._process.is_running:
+        if self.is_running:
             raise RuntimeError("Can't attach stdin to a running process")
         elif isinstance(self._stdin, Subprocess):
             self._stdin.stdin = value
@@ -219,7 +172,7 @@ class Subprocess(object):
             raise ValueError("Needs at least one argument")
         elif len(args) == 1 and isinstance(args[0], Subprocess):
             otherprocess = args[0]
-            if otherprocess._process.is_running:
+            if otherprocess.is_running:
                 raise ValueError("Can't attach the output to the input of a "
                                  "running process.")
         else:
@@ -230,9 +183,17 @@ class Subprocess(object):
 
     def _wait(self):  # Recursively wait from the beginning of the pipe
         if isinstance(self._stdin, Subprocess):
-            self._stdin._process._wrapped.stdout = None  # Hide stdout
+            self._stdin._process.stdout = None  # Hide stdout
             self._stdin._wait()
         return self._process.communicate()
+
+    def start(self):
+        assert not self.is_running, "Can't start a running processes"
+
+        if isinstance(self._stdin, Subprocess):
+            self._stdin.start()
+
+        self._process = subprocess.Popen(**self._get_popen_kwargs())
 
     def wait(self):
         """
@@ -242,6 +203,8 @@ class Subprocess(object):
         If there's no error, the stderr is ``None``. If the process fails (has
         a non-zero exit code) it raises a ``subprocess.CalledProcessError``.
         """
+        if not self.is_running:
+            self.start()
         self._process.poll()  # Warmup _LazyPopen of the whole pipe
         output, errors = self._wait()
 

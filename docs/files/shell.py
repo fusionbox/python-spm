@@ -13,14 +13,6 @@ def lookup(command):
     """
     Lookup a command in PATH. For example::
 
-        >>> lookup('ls')
-        '/usr/bin/ls'
-        >>> lookup('usermod')
-        '/usr/sbin/usermod'
-        >>> lookup('foobar')
-        Traceback (most recent call last):
-          File "<stdin>", line 1, in <module>
-        ValueError: Invalid command
 
     This function is incredibly dumb, and does not search for an executable
     file.
